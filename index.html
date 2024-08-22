@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eye's Dream</title>
+</head>
+<canvas></canvas>
+<script>
+    const canvas = document.createElement("canvas")
+    const gl = canvas.getContext("webgl2")
+
+    document.title = "🤖"
+    document.body.innerHTML = ""
+    document.body.appendChild(canvas)
+    document.body.style = "margin:0;touch-action:none;overflow:hidden;"
+    canvas.style.width = "100%"
+    canvas.style.height = "auto"
+    canvas.style.userSelect = "none"
+
+    const dpr = window.devicePixelRatio
+
+    function resize() {
+    const {
+        innerWidth: width,
+        innerHeight: height
+    } = window
+
+    canvas.width = width * dpr
+    canvas.height = height * dpr
+
+    gl.viewport(0, 0, width * dpr, height * dpr)
+    }
+    window.onresize = resize
+
+    const vertexSource = `#version 300 es
+        #ifdef GL_FRAGMENT_PRECISION_HIGH
+        precision highp float;
+        #else
+        precision mediump float;
+        #endif
+
+        in vec4 position;
+
+        void main(void) {
+            gl_Position = position;
+        }
+        `
+
+    const fragmentSource = `#version 300 es
+        /*********
+         * made by Matthias Hurrle (@atzedent) 
+         */
+        #ifdef GL_FRAGMENT_PRECISION_HIGH
+        precision highp float;
+        #else
+        precision mediump float;
+        #endif
+
+        out vec4 fragColor;
+
+        uniform vec2 resolution;
+        uniform float time;
+        uniform vec2 touch;
+        uniform int pointerCount;
+
+        #define mouse (touch/resolution)
+        #define P pointerCount
+        #define T time
+        #define S smoothstep
+
+        #define syl(p,s) (length(p)-s)
+
+        mat2 rot(float a) {
+            float c = cos(a), s = sin(a);
+
+            return mat2(c, -s, s, c);
+        }
+
+        float disc(vec3 p, vec2 s, float r) {
+            vec2 e = vec2(length(abs(p.xz)), abs(p.y)) - s;
+
+            return length(max(e, .0)) +
+                min(.0, max(e.x, e.y)) - r;
+        }
+
+        vec2 map(vec3 p) {
+            vec2 a = vec2(-disc(p-vec3(0,49,0), vec2(50), 5.), 0),
+            b = vec2(syl(p, 1.), 1);
+
+            a = a.x < b.x ? a : b;
+
+            return a;
+        }
+
+        vec3 tunnel(vec2 uv, float t) {
+            float tt = t;
+            vec2 p = uv;
+
+            t = t*.25-cos(t*.5)*1.5;
+            p *= rot(t);
+
+            vec3 col = vec3(0);
+            const vec3 tint = vec3(2,2.5,3);
+
+            p = normalize(p)*log(length(p)*.8);
+            p = vec2(atan(p.y, p.x), length(p)*.5+T*.5);
+
+            vec3 z = vec3(p*.5, 0);
+            float
+            c = sin(t*.2)*.25+.75,
+            d = .0,
+            k = .5,
+            f = mix(.95, 1.,fract(sin(dot(z, z)+tt)*345678.));
+
+            for (int i = 0; i < 3; i++) {
+            z.z += d*(.85-c*.35)*f;
+
+            vec3 a = z/k;
+            d += mix(
+                abs(.7*dot(sin(a*2.), cos((a*2.).yzx))*.5),
+                abs(f*k*dot(sin(a), cos(a.yzx))),
+                c
+            );
+            k *= .25;
+            }
+
+            d = 1.-clamp(d*1.2,.0, 1.)*1.2;
+
+            col += d*S(2.,.0, dot(uv, uv)*1.2)*tint*.5;
+            return max(col, .0);
+        }
+
+        vec3 norm(vec3 p) {
+            vec2 e = vec2(1e-3, 0);
+            float d = map(p).x;
+
+            return normalize(d-vec3(
+                map(p-e.xyy).x,
+                map(p-e.yxy).x,
+                map(p-e.yyx).x
+            ));
+        }
+
+        void cam(inout vec3 p) {
+        if (P>0) {
+            p.yz *= rot(-mouse.y*acos(-1.)+acos(.0));
+            p.xz *= rot(acos(-1.)-mouse.x*acos(-1.)*2.);
+        } else {
+            p.yz *= rot(-.125);
+            p.xz *= rot(.125);
+        }
+        }
+
+        void main(void) {
+            vec2 uv = (
+                gl_FragCoord.xy-.5*resolution
+            ) / min(resolution.x, resolution.y);
+
+            vec3 col = vec3(0),
+            ro = vec3(0,0,-3),
+            rd = normalize(vec3(uv, 1));
+
+            cam(ro);
+            cam(rd);
+            vec3 p = ro;
+
+            const float steps = 400.;
+
+            for (float i = .0; i < steps; i++) {
+                vec2 d = map(p);
+
+                if (d.x < 1e-3) {
+                    col += (steps-i)/steps;
+                    if (d.y == .0) {
+                        col += vec3(1,.05,0);
+                    } else {
+                        vec3 n = norm(p);
+                        if (n.z > .0) break;
+                        col = mix(col, 1.-min(col, 1.25*tunnel(n.xy*S(.5,.3, syl(n.xy, .125)), T)), -p.z);
+                        col += 1.-max(S(.005, .0, syl(n.xy, .58)), S(.005, .0, -syl(n.xy, .63)));
+                    }
+                    break;
+                }
+
+                p += rd*d.x;
+            }
+
+            col = S(1., .125, col);
+            fragColor = vec4(col, 1);
+        }
+        `
+
+    function compile(shader, source) {
+    gl.shaderSource(shader, source)
+    gl.compileShader(shader);
+
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader))
+    }
+    }
+
+    let program
+
+    function setup() {
+    const vs = gl.createShader(gl.VERTEX_SHADER)
+    const fs = gl.createShader(gl.FRAGMENT_SHADER)
+
+    compile(vs, vertexSource)
+    compile(fs, fragmentSource)
+
+    program = gl.createProgram()
+
+    gl.attachShader(program, vs)
+    gl.attachShader(program, fs)
+    gl.linkProgram(program)
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error(gl.getProgramInfoLog(program))
+    }
+    }
+
+    let vertices, buffer
+
+    function init() {
+    vertices = [
+        -1., -1., 1.,
+        -1., -1., 1.,
+        -1., 1., 1.,
+        -1., 1., 1.,
+    ]
+
+    buffer = gl.createBuffer()
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW)
+
+    const position = gl.getAttribLocation(program, "position")
+
+    gl.enableVertexAttribArray(position)
+    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
+
+    program.resolution = gl.getUniformLocation(program, "resolution")
+    program.time = gl.getUniformLocation(program, "time")
+    program.touch = gl.getUniformLocation(program, "touch")
+    program.pointerCount = gl.getUniformLocation(program, "pointerCount")
+    }
+
+    const mouse = {
+    x: 0,
+    y: 0,
+    touches: new Set(),
+    update: function(x, y, pointerId) {
+        this.x = x * dpr;
+        this.y = (innerHeight - y) * dpr;
+        this.touches.add(pointerId)
+    },
+    remove: function(pointerId) { this.touches.delete(pointerId) }
+    }
+
+    function loop(now) {
+    gl.clearColor(0, 0, 0, 1)
+    gl.clear(gl.COLOR_BUFFER_BIT)
+    gl.useProgram(program)
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
+    gl.uniform2f(program.resolution, canvas.width, canvas.height)
+    gl.uniform1f(program.time, now * 1e-3)
+    gl.uniform2f(program.touch, mouse.x, mouse.y)
+    gl.uniform1i(program.pointerCount, mouse.touches.size)
+    gl.drawArrays(gl.TRIANGLES, 0, vertices.length * .5)
+    requestAnimationFrame(loop)
+    }
+
+    setup()
+    init()
+    resize()
+    loop(0)
+
+    window.addEventListener("pointerdown", e => mouse.update(e.clientX, e.clientY, e.pointerId))
+    window.addEventListener("pointerup", e => mouse.remove(e.pointerId))
+    window.addEventListener("pointermove", e => {
+    if (mouse.touches.has(e.pointerId))
+        mouse.update(e.clientX, e.clientY, e.pointerId)
+    })
+</script>
+</html>
